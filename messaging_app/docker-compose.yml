@@ -13,7 +13,7 @@ services:
       - db
     networks:
       - messaging_network
-    command: ["python3", "manage.py", "runserver", "0.0.0.0:8000"]
+    command: ["python3 manage.py runserver"]
   db:
     image: mysql:8.0
     env_file:
