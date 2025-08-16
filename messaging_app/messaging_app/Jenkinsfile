@@ -2,14 +2,14 @@ pipeline {
     agent any
 
     environment {
-        GIT_REPO = 'https://github.com/shymaaismail/alx-backend-python.git'
-        DOCKER_IMAGE = 'shymaamismail/messaging_app'
+        REPOSITORY = 'https://github.com/mustorpha/alx-backend-python.git'
+        DOCKER_IMAGE = 'mustorpha/messaging_app'
     }
 
     stages {
         stage('Clone Repository') {
             steps {
-                git branch: 'main', url: "${env.GIT_REPO}"
+                git branch: 'main', url: "${env.REPOSITORY}"
             }
         }
 

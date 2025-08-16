@@ -16,16 +16,15 @@ spec:
     spec:
       containers:
       - name: django-messaging-container
-        image: your-dockerhub-username/django-messaging-app:latest
+        image: mustorpha/django-messaging-app:latest
         ports:
         - containerPort: 8000
         env:
-        # Add environment variables if needed, for example:
         - name: DJANGO_SETTINGS_MODULE
           value: "messaging_app.settings"
         readinessProbe:
           httpGet:
-            path: /health/   # Adjust path based on your health check URL
+            path: /health/
             port: 8000
           initialDelaySeconds: 5
           periodSeconds: 10
