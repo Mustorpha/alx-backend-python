@@ -18,15 +18,20 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
 from chats.auth import CustomTokenObtainPairView
+from .health import health_check, readiness_check, liveness_check
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('chats.urls')),
     path('api-auth/', include('rest_framework.urls')),  # For browsable API authentication
     path('api/', include('rest_framework.urls')),
-   path('api/auth/', include([
+    path('api/auth/', include([
         # JWT Token endpoints
         path('login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
         path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-   ])),
+    ])),
+    # Health check endpoints
+    path('health/', health_check, name='health_check'),
+    path('health/ready/', readiness_check, name='readiness_check'),
+    path('health/live/', liveness_check, name='liveness_check'),
 ]

@@ -1,0 +1,277 @@
+name: Django CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_messaging_db
+          MYSQL_USER: django_user
+          MYSQL_PASSWORD: django_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, "3.10", 3.11]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/Requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-libmysqlclient-dev build-essential pkg-config
+
+      - name: Install Python dependencies
+        working-directory: ./messaging_app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Requirements.txt
+          pip install coverage
+
+      - name: Wait for MySQL
+        run: |
+          while ! mysqladmin ping -h"127.0.0.1" -P3306 -uroot -proot --silent; do
+            sleep 1
+          done
+
+      - name: Set up environment variables
+        run: |
+          echo "MYSQL_DB=test_messaging_db" >> $GITHUB_ENV
+          echo "MYSQL_USER=django_user" >> $GITHUB_ENV
+          echo "MYSQL_PASSWORD=django_password" >> $GITHUB_ENV
+          echo "MYSQL_HOST=127.0.0.1" >> $GITHUB_ENV
+          echo "MYSQL_PORT=3306" >> $GITHUB_ENV
+          echo "DJANGO_SETTINGS_MODULE=messaging_app.settings" >> $GITHUB_ENV
+
+      - name: Run migrations
+        working-directory: ./messaging_app
+        run: |
+          python manage.py makemigrations
+          python manage.py migrate
+
+      - name: Run tests with coverage
+        working-directory: ./messaging_app
+        run: |
+          coverage run --source='.' manage.py test
+          coverage report --show-missing
+          coverage html
+          coverage xml
+
+      - name: Upload coverage reports as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports-${{ matrix.python-version }}
+          path: |
+            ./messaging_app/coverage.xml
+            ./messaging_app/htmlcov/
+          retention-days: 30
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./messaging_app/coverage.xml
+          flags: unittests
+          name: codecov-umbrella-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-lint-${{ hashFiles('**/Requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-lint-
+
+      - name: Install dependencies for linting
+        working-directory: ./messaging_app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Requirements.txt
+          pip install flake8 black isort mypy pylint
+
+      - name: Run comprehensive flake8 linting
+        working-directory: ./messaging_app
+        run: |
+          echo "Running flake8 with comprehensive checks..."
+          flake8 . --count --statistics --show-source --max-line-length=88 \
+            --exclude=migrations,__pycache__,manage.py,settings.py,venv,env,.git \
+            --ignore=E203,W503 \
+            --max-complexity=10
+
+      - name: Check code formatting with Black
+        working-directory: ./messaging_app
+        run: |
+          echo "Checking code formatting with Black..."
+          black --check --diff .
+
+      - name: Check import sorting with isort
+        working-directory: ./messaging_app
+        run: |
+          echo "Checking import sorting with isort..."
+          isort --check-only --diff .
+
+      - name: Run type checking with mypy (optional)
+        working-directory: ./messaging_app
+        continue-on-error: true
+        run: |
+          echo "Running type checking with mypy..."
+          mypy . --ignore-missing-imports --exclude=migrations
+
+      - name: Run pylint analysis
+        working-directory: ./messaging_app
+        continue-on-error: true
+        run: |
+          echo "Running pylint analysis..."
+          pylint --load-plugins=pylint_django --django-settings-module=messaging_app.settings \
+            --ignore=migrations,manage.py \
+            --disable=C0114,C0115,C0116,R0903,W0613 \
+            . || echo "Pylint completed with warnings"
+
+      - name: Upload linting artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linting-reports
+          path: |
+            ./messaging_app/*.log
+            ./messaging_app/lint-*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install security dependencies
+        working-directory: ./messaging_app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Requirements.txt
+          pip install safety bandit semgrep
+
+      - name: Run dependency vulnerability check with Safety
+        working-directory: ./messaging_app
+        run: |
+          echo "Running Safety check for known vulnerabilities..."
+          safety check -r Requirements.txt --json > safety-report.json || true
+          safety check -r Requirements.txt
+
+      - name: Run static security analysis with Bandit
+        working-directory: ./messaging_app
+        run: |
+          echo "Running Bandit security analysis..."
+          bandit -r . -f json -o bandit-report.json \
+            -x */migrations/*,*/venv/*,*/env/*,*/__pycache__/* || true
+          bandit -r . -x */migrations/*,*/venv/*,*/env/*,*/__pycache__/*
+
+      - name: Run Semgrep security scan
+        working-directory: ./messaging_app
+        continue-on-error: true
+        run: |
+          echo "Running Semgrep security scan..."
+          semgrep --config=auto --json --output=semgrep-report.json . || true
+          semgrep --config=auto . || echo "Semgrep completed with findings"
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            ./messaging_app/safety-report.json
+            ./messaging_app/bandit-report.json
+            ./messaging_app/semgrep-report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+  build-summary:
+    runs-on: ubuntu-latest
+    needs: [test, code-quality, security]
+    if: always()
+
+    steps:
+      - name: Check all jobs status
+        run: |
+          echo "Test job status: ${{ needs.test.result }}"
+          echo "Code quality job status: ${{ needs.code-quality.result }}"
+          echo "Security job status: ${{ needs.security.result }}"
+
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "❌ Tests failed"
+            exit 1
+          fi
+
+          if [[ "${{ needs.code-quality.result }}" != "success" ]]; then
+            echo "❌ Code quality checks failed"
+            exit 1
+          fi
+
+          if [[ "${{ needs.security.result }}" == "failure" ]]; then
+            echo "❌ Critical security issues detected"
+            exit 1
+          fi
+
+          echo "✅ All quality checks passed!"
+
+      - name: Create build summary
+        run: |
+          echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Quality | ${{ needs.code-quality.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result == 'success' && '✅ Passed' || needs.security.result == 'failure' && '❌ Failed' || '⚠️ Warning' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Artifacts Generated:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage reports (HTML + XML)" >> $GITHUB_STEP_SUMMARY
+          echo "- Linting analysis reports" >> $GITHUB_STEP_SUMMARY
+          echo "- Security scan results" >> $GITHUB_STEP_SUMMARY

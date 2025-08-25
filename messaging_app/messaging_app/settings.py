@@ -77,12 +77,29 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'messaging_app.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Database configuration - Use MySQL for production/CI, SQLite for development
+if os.getenv('MYSQL_DB'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.getenv('MYSQL_DB'),
+            'USER': os.getenv('MYSQL_USER'),
+            'PASSWORD': os.getenv('MYSQL_PASSWORD'),
+            'HOST': os.getenv('MYSQL_HOST', 'db'),  # Default to 'db' for Docker, can be overridden for CI
+            'PORT': os.getenv('MYSQL_PORT', '3306'),
+            'OPTIONS': {
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
     }
-}
+else:
+    # Fallback to SQLite for local development
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 AUTH_USER_MODEL = 'chats.User'
 
@@ -112,14 +129,3 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('MYSQL_DB'),
-        'USER': os.getenv('MYSQL_USER'),
-        'PASSWORD': os.getenv('MYSQL_PASSWORD'),
-        'HOST': 'db',  # This is the name of the docker service
-        'PORT': '3306',
-    }
-}
